@@ -29,10 +29,10 @@ func (c *notebookController) RegisterRoutes(r fiber.Router) {
 	h := r.Group("/notebook/v1")
 	h.Get("", c.GetAll)
 	h.Post("", c.Create)
-	h.Get(":id", c.Show)
-	h.Put(":id", c.Update)
-	h.Delete(":id", c.Delete)
-	h.Put(":id/move", c.MoveNotebook)
+	h.Get("/:id", c.Show)
+	h.Put("/:id", c.Update)
+	h.Delete("/:id", c.Delete)
+	h.Put("/:id/move", c.MoveNotebook)
 }
 
 func (c *notebookController) Create(ctx *fiber.Ctx) error {

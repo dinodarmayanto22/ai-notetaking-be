@@ -39,10 +39,20 @@ type MoveNotebookResponse struct {
 	Id uuid.UUID `json:"id"`
 }
 
+type GetAllNotebookResponseNote struct {
+	Id        uuid.UUID  `json:"id"`
+	Title     string     `json:"title"`
+	Content   string     `json:"content"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt *time.Time `json:"updated_at"`
+}
+
 type GetAllNotebookResponse struct {
 	Id        uuid.UUID  `json:"id"`
 	Name      string     `json:"name"`
 	ParentId  *uuid.UUID `json:"parent_id"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt *time.Time `json:"updated_at"`
+
+	Notes []*GetAllNotebookResponseNote `json:"notes"`
 }

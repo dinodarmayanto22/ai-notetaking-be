@@ -23,12 +23,18 @@ type INotebookService interface {
 
 type notebookService struct {
 	notebookRepository repository.INotebookRepository
+	noteRepository     repository.INoteRepository
 	db                 *pgxpool.Pool
 }
 
-func NewNotebookService(notebookRepository repository.INotebookRepository, db *pgxpool.Pool) INotebookService {
+func NewNotebookService(
+	notebookRepository repository.INotebookRepository,
+	noteRepository repository.INoteRepository,
+	db *pgxpool.Pool,
+) INotebookService {
 	return &notebookService{
 		notebookRepository: notebookRepository,
+		noteRepository:     noteRepository,
 		db:                 db,
 	}
 }
@@ -39,7 +45,9 @@ func (c *notebookService) GetAll(ctx context.Context) ([]*dto.GetAllNotebookResp
 		return nil, err
 	}
 
+	ids := make([]uuid.UUID, 0)
 	result := make([]*dto.GetAllNotebookResponse, 0)
+
 	for _, notebook := range notebooks {
 		res := dto.GetAllNotebookResponse{
 			Id:        notebook.Id,
@@ -47,8 +55,29 @@ func (c *notebookService) GetAll(ctx context.Context) ([]*dto.GetAllNotebookResp
 			ParentId:  notebook.ParentId,
 			CreatedAt: notebook.CreatedAt,
 			UpdatedAt: notebook.UpdatedAt,
+			Notes:     make([]*dto.GetAllNotebookResponseNote, 0),
 		}
 		result = append(result, &res)
+		ids = append(ids, notebook.Id)
+	}
+
+	notes, err := c.noteRepository.GetByNotebookIds(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := 0; i < len(result); i++ {
+		for j := 0; j < len(notes); j++ {
+			if notes[j].NotebookId == result[i].Id {
+				result[i].Notes = append(result[i].Notes, &dto.GetAllNotebookResponseNote{
+					Id:        notes[j].Id,
+					Title:     notes[j].Title,
+					Content:   notes[j].Content,
+					CreatedAt: notes[j].CreatedAt,
+					UpdatedAt: notes[j].UpdatedAt,
+				})
+			}
+		}
 	}
 
 	return result, nil
@@ -124,6 +153,7 @@ func (c *notebookService) Delete(ctx context.Context, id uuid.UUID) error {
 	defer tx.Rollback(ctx)
 
 	notebookRepo := c.notebookRepository.UsingTx(ctx, tx)
+	noteRepo := c.noteRepository.UsingTx(ctx, tx)
 
 	err = notebookRepo.DeleteById(ctx, id)
 	if err != nil {
@@ -134,6 +164,12 @@ func (c *notebookService) Delete(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
+
+	err = noteRepo.DeleteByNotebookId(ctx, id)
+	if err != nil {
+		return err
+	}
+
 	err = tx.Commit(ctx)
 	if err != nil {
 		return err
