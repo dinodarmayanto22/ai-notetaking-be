@@ -13,7 +13,10 @@ type INoteController interface {
 	RegisterRoutes(r fiber.Router)
 	Create(ctx *fiber.Ctx) error
 	Show(ctx *fiber.Ctx) error
+	Update(ctx *fiber.Ctx) error
 	Delete(ctx *fiber.Ctx) error
+	MoveNote(ctx *fiber.Ctx) error
+	SemanticSearch(ctx *fiber.Ctx) error
 }
 
 type noteController struct {
@@ -28,6 +31,7 @@ func NewNoteController(noteService service.INoteService) INoteController {
 
 func (c *noteController) RegisterRoutes(r fiber.Router) {
 	h := r.Group("/note/v1")
+	h.Get("semantic-search?", c.SemanticSearch)
 	h.Post("", c.Create)
 	h.Get(":id", c.Show)
 	h.Put(":id", c.Update)
@@ -119,4 +123,15 @@ func (c *noteController) MoveNote(ctx *fiber.Ctx) error {
 	}
 
 	return ctx.JSON(serverutils.SuccessResponse("Success Move note", res))
+}
+
+func (c *noteController) SemanticSearch(ctx *fiber.Ctx) error {
+	q := ctx.Query("q", "")
+
+	res, err := c.noteService.SemanticSearch(ctx.Context(), q)
+	if err != nil {
+		return err
+	}
+
+	return ctx.JSON(serverutils.SuccessResponse("Success semantic serach note", res))
 }
