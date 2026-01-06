@@ -53,7 +53,13 @@ func main() {
 	exampleService := service.NewExampleService(exampleRepository)
 	notebookService := service.NewNotebookService(notebookRepository, noteRepository, db, publisherService, noteEmbeddingRepository)
 	noteService := service.NewNoteService(noteRepository, publisherService, noteEmbeddingRepository, db)
-	chatbotService := service.NewChatbotService(db, chatSessionRepository, chatMessageRepository, chatMessageRawRepository)
+	chatbotService := service.NewChatbotService(
+		db,
+		chatSessionRepository,
+		chatMessageRepository,
+		chatMessageRawRepository,
+		noteEmbeddingRepository,
+	)
 
 	exampleController := controller.NewExampleController(exampleService)
 	notebookController := controller.NewNotebookController(notebookService)

@@ -33,6 +33,7 @@ func (c *chatbotController) RegisterRoutes(r fiber.Router) {
 	h.Get("chat-history", c.GetChatHistory)
 	h.Post("create-session", c.CreateSession)
 	h.Post("send-chat", c.SendChat)
+	h.Delete("delete-session", c.DeleteSession)
 }
 
 func (c *chatbotController) CreateSession(ctx *fiber.Ctx) error {
@@ -85,4 +86,24 @@ func (c *chatbotController) SendChat(ctx *fiber.Ctx) error {
 	}
 
 	return ctx.JSON(serverutils.SuccessResponse("Success send chat", res))
+}
+
+func (c *chatbotController) DeleteSession(ctx *fiber.Ctx) error {
+
+	var request dto.DeleteSessionRequest
+
+	err := ctx.BodyParser(&request)
+	if err != nil {
+		return err
+	}
+	if err = serverutils.ValidateRequest(request); err != nil {
+		return err
+	}
+
+	err := c.chatbotService.DeleteSession(ctx.Context(), &request)
+	if err != nil {
+		return err
+	}
+
+	return ctx.JSON(serverutils.SuccessResponse[any]("Success delete session", nil))
 }

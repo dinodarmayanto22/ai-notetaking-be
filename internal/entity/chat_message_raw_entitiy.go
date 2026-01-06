@@ -10,7 +10,7 @@ type ChatMessageRaw struct {
 	Id            uuid.UUID
 	Chat          string
 	Role          string
-	ChatSessionID uuid.UUID
+	ChatSessionId uuid.UUID
 	CreatedAt     time.Time
 	UpdatedAt     *time.Time
 	DeletedAt     *time.Time

@@ -5,7 +5,12 @@ import (
 	"ai-notetaking-be/internal/dto"
 	"ai-notetaking-be/internal/entity"
 	"ai-notetaking-be/internal/repository"
+	"ai-notetaking-be/pkg/chatbot"
+	"ai-notetaking-be/pkg/embedding"
 	"context"
+	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +22,7 @@ type IChatbotService interface {
 	GetAllSesions(ctx context.Context) ([]*dto.GetAllSessionsResponse, error)
 	GetChatHistory(ctx context.Context, sessionId uuid.UUID) ([]*dto.GetChatHistoryResponse, error)
 	SendChat(ctx context.Context, request *dto.SendChatRequest) (*dto.SendChatResponse, error)
+	DeleteSession(ctx context.Context, request *dto.DeleteSessionRequest) error
 }
 
 type chatbotService struct {
@@ -24,6 +30,7 @@ type chatbotService struct {
 	chatSessionRepository    repository.IChatSessionRepository
 	chatMessageRepository    repository.IChatMessageRepository
 	chatMessageRawRepository repository.IChatMessageRawRepository
+	noteEmbeddingRepository  repository.INoteEmbeddingRepository
 }
 
 func (cs *chatbotService) CreateSession(ctx context.Context) (*dto.CreateSessionResponse, error) {
@@ -141,6 +148,7 @@ func (cs *chatbotService) SendChat(ctx context.Context, request *dto.SendChatReq
 	chatSessionRepository := cs.chatSessionRepository.UsingTx(ctx, tx)
 	chatMessageRepository := cs.chatMessageRepository.UsingTx(ctx, tx)
 	chatMessageRawRepository := cs.chatMessageRawRepository.UsingTx(ctx, tx)
+	noteEmbeddingRepository := cs.noteEmbeddingRepository.UsingTx(ctx, tx)
 
 	chatSession, err := chatSessionRepository.GetById(ctx, request.ChatSessionId)
 	if err != nil {
@@ -161,23 +169,106 @@ func (cs *chatbotService) SendChat(ctx context.Context, request *dto.SendChatReq
 		ChatSessionId: request.ChatSessionId,
 		CreatedAt:     now,
 	}
+
+	embeddingRes, err := embedding.GetGeminiEmbedding(
+		os.Getenv("GOOGLE_GEMINI_API_KEY"),
+		request.Chat,
+		"RETRIEVAL_QUERY",
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	decideUseRAGChatHistories := make([]*chatbot.ChatHistory, 0)
+	for i, rawChat := range existingRawChats {
+		if i == 0 {
+			decideUseRAGChatHistories = append(decideUseRAGChatHistories, &chatbot.ChatHistory{
+				Chat: constant.ChatMessageRawInitialUserPromptv1,
+				Role: constant.ChatMessageRoleUser,
+			})
+			continue
+		} else if i == 1 {
+			decideUseRAGChatHistories = append(decideUseRAGChatHistories, &chatbot.ChatHistory{
+				Chat: constant.ChatMessageRawInitialModelPromptv1,
+				Role: constant.ChatMessageRoleModel,
+			})
+			continue
+		}
+		decideUseRAGChatHistories = append(decideUseRAGChatHistories, &chatbot.ChatHistory{
+			Chat: rawChat.Chat,
+			Role: rawChat.Role,
+		})
+	}
+	useRag, err := chatbot.DecideToUseRAG(
+		ctx,
+		os.Getenv("GOOGLE_GEMINI_API_KEY"),
+		decideUseRAGChatHistories,
+	)
+	if err != nil {
+		return nil, err
+	}
+	strBuilder := strings.Builder{}
+	if useRag {
+		noteEmbeddings, err := noteEmbeddingRepository.SearchSimilarity(
+			ctx,
+			embeddingRes.Embedding.Values,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		for i, noteEmbedding := range noteEmbeddings {
+			strBuilder.WriteString(fmt.Sprintf("Reference %d\n", i+1))
+			strBuilder.WriteString(noteEmbedding.Document)
+			strBuilder.WriteString("\n\n")
+		}
+
+	}
+
+	strBuilder.WriteString("User next question: ")
+	strBuilder.WriteString(request.Chat)
+	strBuilder.WriteString("\n\n")
+	strBuilder.WriteString("Your answer ?")
+
 	chatMessageRaw := entity.ChatMessageRaw{
 		Id:            uuid.New(),
-		Chat:          request.Chat,
+		Chat:          strBuilder.String(),
 		Role:          constant.ChatMessageRoleUser,
 		ChatSessionId: request.ChatSessionId,
 		CreatedAt:     now,
 	}
+
+	existingRawChats = append(
+		existingRawChats,
+		&chatMessageRaw,
+	)
+
+	geminiReq := make([]*chatbot.ChatHistory, 0)
+	for _, existingRawChat := range existingRawChats {
+		geminiReq = append(geminiReq, &chatbot.ChatHistory{
+			Chat: existingRawChat.Chat,
+			Role: existingRawChat.Role,
+		})
+	}
+	reply, err := chatbot.GetGeminiResponse(
+		ctx,
+		os.Getenv("GOOGLE_GEMINI_API_KEY"),
+		geminiReq,
+	)
+
+	if err != nil {
+		return nil, err
+	}
 	chatMessageModel := entity.ChatMessage{
 		Id:            uuid.New(),
-		Chat:          "This is automated dumy response",
+		Chat:          reply,
 		Role:          constant.ChatMessageRoleModel,
 		ChatSessionId: request.ChatSessionId,
 		CreatedAt:     now.Add(1 * time.Millisecond),
 	}
 	chatMessageModelRaw := entity.ChatMessageRaw{
 		Id:            uuid.New(),
-		Chat:          "This is automated dumy response",
+		Chat:          reply,
 		Role:          constant.ChatMessageRoleModel,
 		ChatSessionId: request.ChatSessionId,
 		CreatedAt:     now.Add(1 * time.Millisecond),
@@ -218,16 +309,57 @@ func (cs *chatbotService) SendChat(ctx context.Context, request *dto.SendChatReq
 		},
 	}, nil
 }
+
+func (cs *chatbotService) DeleteSession(ctx context.Context, request *dto.DeleteSessionRequest) error {
+	// Mulai transaction
+	tx, err := cs.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Gunakan repository dengan transaction
+	chatSessionRepo := cs.chatSessionRepository.UsingTx(ctx, tx)
+	chatMessageRepo := cs.chatMessageRepository.UsingTx(ctx, tx)
+	chatMessageRawRepo := cs.chatMessageRawRepository.UsingTx(ctx, tx)
+
+	// Cek apakah session ada
+	_, err = chatSessionRepo.GetById(ctx, request.ChatSessionId)
+	if err != nil {
+		return err
+	}
+
+	// Hapus semua chat terkait session
+	if err := chatMessageRepo.DeleteByChatSessionId(ctx, request.ChatSessionId); err != nil {
+		return err
+	}
+	if err := chatMessageRawRepo.DeleteByChatSessionId(ctx, request.ChatSessionId); err != nil {
+		return err
+	}
+	if err := chatSessionRepo.Delete(ctx, request.ChatSessionId); err != nil {
+		return err
+	}
+
+	// Commit transaction
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func NewChatbotService(
 	db *pgxpool.Pool,
 	chatSessionRepository repository.IChatSessionRepository,
 	chatMessageRepository repository.IChatMessageRepository,
 	chatMessageRawRepository repository.IChatMessageRawRepository,
+	noteEmbeedingRepository repository.INoteEmbeddingRepository,
 ) IChatbotService {
 	return &chatbotService{
 		db:                       db,
 		chatSessionRepository:    chatSessionRepository,
 		chatMessageRepository:    chatMessageRepository,
 		chatMessageRawRepository: chatMessageRawRepository,
+		noteEmbeddingRepository:  noteEmbeedingRepository,
 	}
 }

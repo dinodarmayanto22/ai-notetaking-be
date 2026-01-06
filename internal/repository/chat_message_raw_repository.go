@@ -4,6 +4,7 @@ import (
 	"ai-notetaking-be/internal/entity"
 	"ai-notetaking-be/pkg/database"
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,6 +14,7 @@ type IChatMessageRawRepository interface {
 	UsingTx(ctx context.Context, tx database.DatabaseQueryer) IChatMessageRawRepository
 	Create(ctx context.Context, chatMessageRaw *entity.ChatMessageRaw) error
 	GetByChatSessionId(ctx context.Context, ChatSessionId uuid.UUID) ([]*entity.ChatMessageRaw, error)
+	DeleteByChatSessionId(ctx context.Context, chatSessionId uuid.UUID) error
 }
 
 type chatMessageRawRepository struct {
@@ -76,6 +78,20 @@ func (cs *chatMessageRawRepository) GetByChatSessionId(ctx context.Context, chat
 	}
 
 	return res, nil
+}
+
+func (cs *chatMessageRawRepository) DeleteByChatSessionId(ctx context.Context, chatSessionId uuid.UUID) error {
+	_, err := cs.db.Exec(
+		ctx,
+		`UPDATE chat_message_raw SET is_deleted = true, deleted_at = $1 WHERE chat_session_id = $1`,
+		time.Now(),
+		chatSessionId,
+	)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func NewChatMessageRawRepository(db *pgxpool.Pool) IChatMessageRawRepository {

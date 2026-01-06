@@ -4,6 +4,7 @@ import (
 	"ai-notetaking-be/internal/entity"
 	"ai-notetaking-be/pkg/database"
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -15,6 +16,7 @@ type IChatSessionRepository interface {
 	GetAll(ctx context.Context) ([]*entity.ChatSession, error)
 	GetById(ctx context.Context, id uuid.UUID) (*entity.ChatSession, error)
 	Update(ctx context.Context, chatSession *entity.ChatSession) error
+	Delete(ctx context.Context, id uuid.UUID) error
 }
 
 type chatSessionRepository struct {
@@ -103,6 +105,21 @@ func (cs *chatSessionRepository) Update(ctx context.Context, chatSession *entity
 		chatSession.Title,
 		chatSession.UpdatedAt,
 		chatSession.Id,
+	)
+
+	if err != nil {
+		return nil
+	}
+	return nil
+
+}
+
+func (cs *chatSessionRepository) Delete(ctx context.Context, id uuid.UUID) error {
+	_, err := cs.db.Exec(
+		ctx,
+		`UPDATE chat_session SET deleted_at = $1, is_deleted = true WHERE id = $2`,
+		time.Now(),
+		id,
 	)
 
 	if err != nil {
